@@ -1,9 +1,10 @@
-import sys
+﻿import sys
 from datetime import datetime, date
 import getopt
 
 
 DATE_FORMAT = '%Y-%m-%d'
+MAX_COMMITERS = 30
 
 
 def usage():
@@ -57,6 +58,53 @@ def parse_args(input):
     return url, from_date, to_date, verbose, branch
 
 
+def print_active_commiters(max_commiters, branch, from_date, to_date):
+    """
+    Самые активные участники.
+
+    Таблица из 2 столбцов: login автора, количество его
+    коммитов. Таблица отсортирована по количеству коммитов по убыванию. Не
+    более 30 строк. Анализ производится на заданном периоде времени и заданной
+    ветке.
+    """
+    print(max_commiters, branch, from_date, to_date)
+
+
+def print_pull_requests(branch, from_date, to_date):
+    """
+    Количество открытых и закрытых pull requests на заданном периоде времени по
+    дате создания PR и заданной ветке, являющейся базовой для этого PR.
+    """
+    print(branch, from_date, to_date)
+
+
+def print_old_pull_requests(branch, from_date, to_date):
+    """
+    Количество "старых" pull requests на заданном периоде времени по дате создания
+    PR и заданной ветке, являющейся базовой для этого PR.
+
+    Pull request считается старым, если он не закрывается в течение 30 дней и до сих пор открыт.
+    """
+    print(branch, from_date, to_date)
+
+
+def print_issues(from_date, to_date):
+    """
+    Количество открытых и закрытых issues на заданном периоде времени по дате
+    создания issue.
+    """
+    print(from_date, to_date)
+
+
+def print_old_issues(from_date, to_date):
+    """
+    Количество “старых” issues на заданном периоде времени по дате создания issue.
+
+    Issue считается старым, если он не закрывается в течение 14 дней.
+    """
+    print(from_date, to_date)
+
+
 def main():
     """Точка входа."""
     try:
@@ -71,7 +119,16 @@ def main():
         usage()
         return 2
 
-    print(url, from_date, to_date, verbose, branch)
+    # 1
+    print_active_commiters(MAX_COMMITERS, branch, from_date, to_date)
+    # 2
+    print_pull_requests(branch, from_date, to_date)
+    # 3
+    print_old_pull_requests(branch, from_date, to_date)
+    # 4
+    print_issues(from_date, to_date)
+    # 5
+    print_old_issues(from_date, to_date)
 
     return 0
 
