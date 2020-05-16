@@ -550,6 +550,10 @@ def main():
         print('Не удалось сформировать отчёт по issue: {}'.format(str(e)))
         return -1
 
+    if verbose:
+        limit = rate_limit()
+        print('Оставший запас запросов: {}'.format(limit))
+
     return 0
 
 
