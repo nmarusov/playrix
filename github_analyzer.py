@@ -2,12 +2,18 @@
 from datetime import datetime, date
 import getopt
 import re
+from collections import defaultdict
 import requests
 
 
 DATE_FORMAT = '%Y-%m-%d'
 GITHUB_API_ROOT = 'https://api.github.com'
 URL_PATTERN = re.compile(r'https://github.com/(?P<owner>\w+)/(?P<repo>\w+)')
+
+ACTIVE_COMMITERS_TEMPLATE = \
+    """
+Логин автора         Кол-во коммитов
+{}"""
 
 PR_TEMPLATE = \
     """
@@ -118,10 +124,74 @@ def get_repository_start_date(owner, repo):
 
 # Функции анализа репозитория
 
+def select_active_commiters(owner, repo, branch, from_date, to_date, limit=30):
+    """
+    Делает выборку самых активных участников разработки.
+    """
+    # Подготовить строку запроса а API
+    url = f'{GITHUB_API_ROOT}/repos/{owner}/{repo}/commits'
+    # Получить список коммитов в заданной ветке за заданный промежуток времени
+    params = {
+        'sha': branch,
+        'since': from_date.isoformat(),
+        'until': to_date.isoformat()
+    }
+
+    # Словарь участников в формате {login: count}
+    commiters = defaultdict(int)
+
+    # Githib возвращает список коммитов постранично
+    # Закончить, когда в ответе не будет ссылки на следующую страницу
+    while True:
+        # Отправить запрос GitHub и получить ответ
+        r = requests.get(url, params=params)
+
+        # Бросить исключение, если код ответа не 200
+        if r.status_code != 200:
+            raise RuntimeError(
+                'Сервер вернул код ошибки {}'.format(r.status_code))
+
+        # Попробовать создать JSON-объект из ответа
+        try:
+            response = r.json()
+        except Exception as e:
+            message = 'Не удалось получить все коммиты '
+            if rate_limit() == 0:
+                message += 'т.к. исчерпан лимит запросов.'
+            else:
+                message += 'по причине "{}".'.format(
+                    str(e))
+
+            raise RuntimeError(message)
+
+        # Некоторое количество коммитов должно быть, иначе прекратить
+        # получать данные
+        if not response or not isinstance(response, list):
+            raise RuntimeError(
+                'Неожиданный формат ответа: {}'.format(response))
+
+        # Подсчитать количество коммитов от каждого участника
+        try:
+            for commit in response:
+                commiters[commit['author']['login']] += 1
+        except Exception as e:
+            raise RuntimeError(
+                'Не удалось получить логин участника: {}'.format(str(e)))
+
+        # Это была последняя страница, больше нечего запрашивать
+        if 'next' not in r.links:
+            break
+
+        url = r.links['next']['url']
+
+    # Вернуть самых активных в виде списка кортежей [(login, count)],
+    # ограничив количество TOP-участников
+    return sorted(commiters.items(), key=lambda x: x[1], reverse=True)[:limit]
+
 
 def count_pull_requests(owner, repo, branch, from_date, to_date, age=30):
     """
-    Подсчитывае количества открытых, закрытых и "старых" PR.
+    Подсчитывает количества открытых, закрытых и "старых" PR.
     """
     def count_open(response):
         """Подсчитывает количество открытых PR на заданном интервале времени,
@@ -188,7 +258,15 @@ def count_pull_requests(owner, repo, branch, from_date, to_date, age=30):
     # Githib возвращает список PR постранично
     # Закончить, когда в ответе не будет ссылки на следующую страницу
     while True:
+        # Отправить запрос GitHub и получить ответ
         r = requests.get(url, params=params)
+
+        # Бросить исключение, если код ответа не 200
+        if r.status_code != 200:
+            raise RuntimeError(
+                'Сервер вернул код ошибки {}'.format(r.status_code))
+
+        # Попробовать создать JSON-объект из ответа
         try:
             response = r.json()
         except Exception as e:
@@ -203,9 +281,11 @@ def count_pull_requests(owner, repo, branch, from_date, to_date, age=30):
 
         # Некоторое количество PR должно быть, иначе прекратить
         # получать данные
-        if not response:
-            break
+        if not response or not isinstance(response, list):
+            raise RuntimeError(
+                'Неожиданный формат ответа: {}'.format(response))
 
+        # Подсчитать количество открытых, закрытых и старых PR
         try:
             o, c, s = count_open(response), count_closed(
                 response), count_stale(response)
@@ -290,7 +370,15 @@ def count_issues(owner, repo, from_date, to_date, age=14):
     # Githib возвращает список issue постранично
     # Закончить, когда в ответе не будет ссылки на следующую страницу
     while True:
+        # Отправить запрос GitHub и получить ответ
         r = requests.get(url, params=params)
+
+        # Бросить исключение, если код ответа не 200
+        if r.status_code != 200:
+            raise RuntimeError(
+                'Сервер вернул код ошибки {}'.format(r.status_code))
+
+        # Попробовать создать JSON-объект из ответа
         try:
             response = r.json()
         except Exception as e:
@@ -305,9 +393,11 @@ def count_issues(owner, repo, from_date, to_date, age=14):
 
         # Некоторое количество issue должно быть, иначе прекратить
         # получать данные
-        if not response:
-            break
+        if not response or not isinstance(response, list):
+            raise RuntimeError(
+                'Неожиданный формат ответа: {}'.format(response))
 
+        # Подсчитать количество открытых, закрытых и старых issue
         try:
             o, c, s = count_open(response), count_closed(
                 response), count_stale(response)
@@ -349,10 +439,15 @@ def print_active_commiters(
     более 30 строк. Анализ производится на заданном периоде времени и заданной
     ветке.
     """
-    pass
+    commiters = select_active_commiters(
+        owner, repo, branch, from_date, to_date, limit=max_commiters)
+    report = ACTIVE_COMMITERS_TEMPLATE.format(
+        '\n'.join('{:<20.20} {:6d}'.format(*item) for item in commiters)
+    )
+    print(report)
 
 
-def print_pull_requests(owner, repo, branch, from_date, to_date):
+def print_pull_requests(owner, repo, branch, from_date, to_date, age=30):
     """
     Отчёт по PR.
 
@@ -366,11 +461,11 @@ def print_pull_requests(owner, repo, branch, from_date, to_date):
     и до сих пор открыт.
     """
     report = PR_TEMPLATE.format(
-        *count_pull_requests(owner, repo, branch, from_date, to_date))
+        *count_pull_requests(owner, repo, branch, from_date, to_date, age=age))
     print(report)
 
 
-def print_issues(owner, repo, from_date, to_date):
+def print_issues(owner, repo, from_date, to_date, age=14):
     """
     Отчёт по issues.
 
@@ -379,7 +474,7 @@ def print_issues(owner, repo, from_date, to_date):
     issue. Issue считается старым, если он не закрывается в течение 14 дней.
     """
     report = ISSUES_TEMPLATE.format(
-        *count_issues(owner, repo, from_date, to_date))
+        *count_issues(owner, repo, from_date, to_date, age=age))
     print(report)
 
 
@@ -397,12 +492,14 @@ def main():
         usage()
         return 2
 
+    # Попытаться разобрать переданный URL
     try:
         owner, repo = parse_url(url)
     except Exception:
         print('Неправильный формат строки URL ({}).'.format(url))
         return 2
 
+    # Если дата начала анализа не указана, получить дату создания репозитория
     if from_date is None:
         try:
             from_date = get_repository_start_date(owner, repo)
@@ -414,6 +511,7 @@ def main():
         print('Анализ ветки {} репозитория {} с {} до {}'.format(
             branch, url, from_date.date(), to_date.date()))
 
+    # Проверка исчерпания лимита запросов в GitHub
     limit = rate_limit()
 
     if limit == 0:
@@ -422,11 +520,17 @@ def main():
     elif verbose:
         print('Оставший запас запросов: {}'.format(limit))
 
+    # Отчёт по участникам
     if verbose:
         print('Получение данных для отчёта по самым активным участника.')
 
-    # print_active_commiters(owner, repo, branch, from_date, to_date)
+    try:
+        print_active_commiters(owner, repo, branch, from_date, to_date)
+    except Exception as e:
+        print('Не удалось сформировать отчёт по участникам: {}'.format(str(e)))
+        return -1
 
+    # Отчёт по PR
     if verbose:
         print('Получение данных для отчёта по PR.')
 
@@ -436,6 +540,7 @@ def main():
         print('Не удалось сформировать отчёт по PR: {}'.format(str(e)))
         return -1
 
+    # Отчёт по issue
     if verbose:
         print('Получение данных для отчёта по issue.')
 
